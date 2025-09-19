@@ -69,8 +69,8 @@ class UrlFetcher {
 	 */
 	public function fetch_url( $url, $first_fetch = true ) {
 		try {
-			// Validate the url.
-			$this->url = $this->replace_host( $url, $this->args['home_path'], $this->args['host_path'] );
+			// Set the url.
+			$this->url = self::process_url( $url, $this->args['home_path'], $this->args['host_path'] );
 
 			// Return error if the url is invalid.
 			if ( ! $this->url ) {
@@ -131,14 +131,8 @@ class UrlFetcher {
 			if ( in_array( $code, [ 404, 410 ] ) ) {
 				// If we have an existing redirect, try it.
 				if ( $this->args['existing'] ) {
-					// If it's a relative url, convert it to an absolute url.
-					if ( ! wp_http_validate_url( $this->args['existing'] ) ) {
-						$existing = self::convert_relative_url( $this->args['existing'], $this->args['host_path'] );
-					}
-					// If it's an absolute url, replace the host.
-					else {
-						$existing = self::replace_host( $this->args['existing'], $this->args['home_path'], $this->args['host_path'] );
-					}
+					// Process the existing redirect.
+					$existing = self::process_url( $this->args['existing'], $this->args['home_path'], $this->args['host_path'] );
 
 					// If the existing redirect is valid and different from current URL, try it.
 					if ( $existing && $existing !== $this->url ) {
@@ -291,56 +285,33 @@ class UrlFetcher {
 		return $permalink;
 	}
 
-	// /**
-	//  * Validate the url.
-	//  *
-	//  * @since 0.1.0
-	//  *
-	//  * @param string $url The url to validate.
-	//  *
-	//  * @return string|false The validated url.
-	//  */
-	// private function validate_url( $url ) {
-	// 	// Bail if no url.
-	// 	if ( ! $url ) {
-	// 		return false;
-	// 	}
+	/**
+	 * Process the url.
+	 *
+	 * @since 0.1.0
+	 *
+	 * @param string $url The url to process.
+	 * @param string $home_path The home path to use.
+	 * @param string $host_path The host path to use.
+	 *
+	 * @return string The processed url.
+	 */
+	public static function process_url( $url, $home_path, $host_path ) {
+		// Make sure we have a home path.
+		$home_path = $home_path ? $home_path : home_url();
 
-	// 	// If we have a host to use for relative URLs
-	// 	if ( $this->args['host'] ) {
-	// 		// Parse the URL to check if it has a scheme and host
-	// 		$parsed = wp_parse_url( $url );
+		// Convert relative URLs to absolute URLs using the home path, which defaults to the current site's home_url path.
+		if ( ! wp_http_validate_url( $url ) ) {
+			$url = UrlFetcher::convert_relative_url( $url, $home_path );
+		}
 
-	// 		// If the URL doesn't have a scheme or host, it's a relative URL.
-	// 		// Only prepend the host for relative URLs.
-	// 		if ( ! isset( $parsed['scheme'] ) || ! isset( $parsed['host'] ) ) {
-	// 			// This is a relative URL, prepend the host.
-	// 			$url = $this->prepend_host( $url );
-	// 		}
-	// 	}
+		// Maybe replace the host for absolute URLs.
+		if ( wp_http_validate_url( $url ) && $host_path ) {
+			$url = UrlFetcher::replace_host( $url, $home_path, $host_path );
+		}
 
-	// 	// Validate the final URL
-	// 	$url = wp_http_validate_url( $url );
-
-	// 	return $url;
-	// }
-
-	// /**
-	//  * Prepend a host to a URL path.
-	//  *
-	//  * @since 0.1.0
-	//  *
-	//  * @param string $path The URL path to prepend host to.
-	//  *
-	//  * @return string The URL with host prepended.
-	//  */
-	// private function prepend_host( $path ) {
-	// 	// Remove leading slash if present.
-	// 	$path = ltrim( $path, '/' );
-
-	// 	// Force https.
-	// 	return sprintf( 'https://%s/%s', untrailingslashit( $this->args['host'] ), $path );
-	// }
+		return $url;
+	}
 
 	/**
 	 * Convert relative URL to absolute URL using host path.
@@ -386,7 +357,7 @@ class UrlFetcher {
 	 *
 	 * @return string|false The processed URL.
 	 */
-	public static function replace_host( $url, $home_path, $host_path ) {
+	public static function replace_host( $url, $home_path, $host_path = '' ) {
 		// Bail if no host path provided.
 		if ( ! $host_path ) {
 			return $url;
@@ -396,6 +367,9 @@ class UrlFetcher {
 		if ( ! wp_http_validate_url( $url ) ) {
 			return $url;
 		}
+
+		// Make sure we have a home path.
+		$home_path = $home_path ? $home_path : home_url();
 
 		// Bail if URL doesn't contain the home path.
 		if ( ! str_contains( $url, $home_path ) ) {

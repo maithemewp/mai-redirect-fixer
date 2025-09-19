@@ -350,7 +350,7 @@ class CLI {
 	 * ## EXAMPLES
 	 *
 	 * wp mai-redirect-fixer check-csv --file=redirects.csv
-	 * wp mai-redirect-fixer check-csv --file=jamie-geller-redirects.csv --host=jamiegeller.com
+	 * wp mai-redirect-fixer check-csv --file=jamie-geller-redirects.csv --host_path=jamiegeller.com
 	 * wp mai-redirect-fixer check-csv --file=wp-content/uploads/redirects.csv
 	 * wp mai-redirect-fixer check-csv --file=wp-content/uploads/redirects.csv --host=example.com
 	 * wp mai-redirect-fixer check-csv --file=redirects.csv --username=admin --password=secret
@@ -417,7 +417,7 @@ class CLI {
 			$total = count( $csv );
 
 			// Log the number of urls to process.
-			$this->logger->info( sprintf( 'Processing %d URLs from CSV', $total ) );
+			$this->logger->info( sprintf( 'Processing %d URLs from CSV with offset of %d', $total, $offset ) );
 
 			// Loop through the csv rows.
 			$count = 0;
@@ -428,8 +428,14 @@ class CLI {
 				$url      = $row[0] ?? '';
 				$existing = $row[1] ?? '';
 
-				// Convert relative URLs to absolute URLs using host path.
-				$url = UrlFetcher::convert_relative_url( $url, $host_path );
+				// Skip if no url.
+				if ( empty( $url ) ) {
+					continue;
+				}
+
+				// Process the url.
+				$url      = UrlFetcher::process_url( $url, $home_path, $host_path );
+				$existing = $existing ? UrlFetcher::process_url( $existing, $home_path, $host_path ) : '';
 
 				// Log the url we're checking.
 				$this->logger->log( sprintf( '[%d/%d]', $count, $total, $url ) );
@@ -653,4 +659,5 @@ class CLI {
 
 		return $yaml;
 	}
+
 }
