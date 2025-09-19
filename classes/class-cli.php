@@ -120,6 +120,9 @@ class CLI {
 	 * [--dry-run]
 	 * : Only list the posts that would be checked. No changes will be made.
 	 *
+	 * [--format=<format>]
+	 * : Output format. Options: yaml, table, json, csv, search-replace. Default: yaml.
+	 *
 	 * ## EXAMPLES
 	 *
 	 * wp mai-redirect-fixer check-posts --post_type=post --post_status=publish --per_page=100 --offset=0 --post_in=1,2,3
@@ -149,6 +152,7 @@ class CLI {
 		$host_path   = isset( $assoc_args['host_path'] ) ? $assoc_args['host_path'] : '';
 		$username    = isset( $assoc_args['username'] ) ? $assoc_args['username'] : '';
 		$password    = isset( $assoc_args['password'] ) ? $assoc_args['password'] : '';
+		$format      = isset( $assoc_args['format'] ) ? $assoc_args['format'] : 'yaml';
 
 		// Log the start.
 		$this->logger->log( 'Loading posts...' );
@@ -171,10 +175,11 @@ class CLI {
 		}
 
 		try {
-			$query     = new WP_Query( $query_args );
-			$found     = 0;
-			$skipped   = 0;
-			$redirects = [];
+			$query        = new WP_Query( $query_args );
+			$found        = 0;
+			$skipped      = 0;
+			$redirects    = [];
+			$broken_links = [];
 
 			// Loop through the posts.
 			if ( $query->have_posts() ) {
@@ -232,11 +237,41 @@ class CLI {
 						// Fetch the url.
 						$redirect = $fetcher->fetch_url( $url );
 
-						// Add to redirects.
-						$redirects[] = $redirect;
+						// If we got a successful redirect, add to redirects.
+						if ( ! is_wp_error( $redirect )
+							&& 200 === $redirect['code']
+							&& $url !== $redirect['location'] )
+							{
+							// Add to redirects.
+							$redirects[] = [
+								'original_url' => $url,
+								'final_url'    => $redirect['location'],
+								'status_code'  => $redirect['code'],
+								'post_id'      => $post->ID,
+								'post_title'   => $post->post_title,
+								'permalink'    => get_permalink( $post->ID ),
+							];
 
-						// If we have redirects.
-						$has_redirects = true;
+							// Set has redirects to true.
+							$has_redirects = true;
+						}
+						// If we got a broken link (404, 410, etc.), add to broken links.
+						elseif ( ! is_wp_error( $redirect )
+							&& in_array( $redirect['code'], [ 404, 410, 500, 502, 503, 504 ], true ) )
+							{
+							// Add to broken links.
+							$broken_links[] = [
+								'original_url' => $url,
+								'final_url'    => '',
+								'status_code'  => $redirect['code'],
+								'post_id'      => $post->ID,
+								'post_title'   => $post->post_title,
+								'permalink'    => get_permalink( $post->ID ),
+							];
+
+							// Set has redirects to true.
+							$has_redirects = true;
+						}
 
 						// Add a small delay between requests to be respectful.
 						if ( $delay ) {
@@ -256,10 +291,20 @@ class CLI {
 			}
 			wp_reset_postdata();
 
-			// Log the redirects.
-			$this->logger->success( sprintf( 'Found %d redirects. Skipped %d posts.', $found, $skipped ) );
+			// Log the results.
+			$this->logger->success( sprintf( 'Found %d redirects and %d broken links. Skipped %d posts.', count( $redirects ), count( $broken_links ), $skipped ) );
 
-			ray( $redirects );
+			// Output the redirects in the requested format.
+			if ( ! empty( $redirects ) ) {
+				$this->logger->log( '=== REDIRECTS ===' );
+				$this->output_results( $redirects, $format );
+			}
+
+			// Output the broken links in the requested format.
+			if ( ! empty( $broken_links ) ) {
+				$this->logger->log( '=== BROKEN LINKS ===' );
+				$this->output_results( $broken_links, $format );
+			}
 
 		} catch ( Exception $e ) {
 			$this->logger->error( $e->getMessage() );
@@ -299,6 +344,8 @@ class CLI {
 	 * [--delay=<delay>]
 	 * : The delay between requests in seconds.
 	 *
+	 * [--format=<format>]
+	 * : Output format. Options: yaml, table, json, csv, search-replace. Default: yaml.
 	 *
 	 * ## EXAMPLES
 	 *
@@ -328,6 +375,7 @@ class CLI {
 		$delay     = $assoc_args['delay'] ? floatval( $assoc_args['delay'] ) : 0;
 		$home_path = isset( $assoc_args['home_path'] ) ? $assoc_args['home_path'] : wp_parse_url( home_url(), PHP_URL_HOST );
 		$host_path = isset( $assoc_args['host_path'] ) ? $assoc_args['host_path'] : '';
+		$format    = isset( $assoc_args['format'] ) ? $assoc_args['format'] : 'yaml';
 
 		// Bail if no file provided.
 		if ( empty( $file ) ) {
@@ -343,8 +391,9 @@ class CLI {
 
 		try {
 			// Initialize the arrays.
-			$skipped   = [];
-			$redirects = [];
+			$skipped      = [];
+			$redirects    = [];
+			$broken_links = [];
 
 			// Parse the csv file.
 			$csv = file_get_contents( $file );
@@ -407,17 +456,24 @@ class CLI {
 					continue;
 				}
 
-				// Skip if not successful. This is already logged by the fetcher.
-				if ( 200 !== $redirect['code'] ) {
-					continue;
+				// If we got a successful redirect, add to redirects.
+				if ( 200 === $redirect['code'] && $url !== $redirect['location'] ) {
+					// Log the response.
+					$redirects[] = [
+						'original_url' => $url,
+						'final_url'    => $redirect['location'],
+						'status_code'  => $redirect['code'],
+					];
 				}
-
-				// Log the response.
-				$redirects[] = [
-					'old_url' => $url,
-					'new_url' => $redirect['location'],
-					'code'    => $redirect['code'],
-				];
+				// If we got a broken link, add to broken links.
+				elseif ( 200 !== $redirect['code'] ) {
+					// Add to broken links.
+					$broken_links[] = [
+						'original_url' => $url,
+						'final_url'    => '',
+						'status_code'  => $redirect['code'],
+					];
+				}
 
 				// Add a small delay between requests to be respectful.
 				if ( $delay ) {
@@ -425,10 +481,177 @@ class CLI {
 				}
 			}
 
-			$this->logger->success( sprintf( 'Found %d redirects.', count( $redirects ) ) );
+			// Log the results.
+			$this->logger->success( sprintf( 'Found %d redirects and %d broken links.', count( $redirects ), count( $broken_links ) ) );
+
+			// Output the redirects in the requested format.
+			if ( ! empty( $redirects ) ) {
+				$this->logger->log( '=== REDIRECTS ===' );
+				$this->output_results( $redirects, $format );
+			}
+
+			// Output the broken links in the requested format.
+			if ( ! empty( $broken_links ) ) {
+				$this->logger->log( '=== BROKEN LINKS ===' );
+				$this->output_results( $broken_links, $format );
+			}
 
 		} catch ( Exception $e ) {
 			$this->logger->error( $e->getMessage() );
 		}
 	}
+
+	/**
+	 * Output results in the specified format.
+	 *
+	 * @since 0.1.0
+	 *
+	 * @param array  $results The results data.
+	 * @param string $format  The output format.
+	 *
+	 * @return void
+	 */
+	private function output_results( $results, $format = 'yaml' ) {
+		// Bail if no results.
+		if ( empty( $results ) ) {
+			$this->logger->log( 'No results to display.' );
+			return;
+		}
+
+		// Check if we have post data and if this is a redirect or broken link.
+		$has_post_data = isset( $results[0]['post_id'] );
+		$is_redirect   = ! empty( $results[0]['final_url'] );
+
+		// Output the results in the requested format.
+		switch ( $format ) {
+			// Output as YAML.
+			case 'yaml':
+				$this->logger->log( $this->array_to_yaml( $results ) );
+				break;
+
+			// Output as pretty JSON.
+			case 'json':
+				$this->logger->log( json_encode( $results, JSON_PRETTY_PRINT ) );
+				break;
+
+			// Output CSV header.
+			case 'csv':
+				if ( $has_post_data ) {
+					$this->logger->log( 'Original URL,Final URL,Status Code,Post ID,Post Title,Permalink' );
+				} else {
+					$this->logger->log( 'Original URL,Final URL,Status Code' );
+				}
+
+				// Output each result as CSV row.
+				foreach ( $results as $result ) {
+					if ( $has_post_data ) {
+						$row = [
+							$result['original_url'],
+							$result['final_url'],
+							$result['status_code'],
+							$result['post_id'],
+							$result['post_title'],
+							$result['permalink'],
+						];
+					} else {
+						$row = [
+							$result['original_url'],
+							$result['final_url'],
+							$result['status_code'],
+						];
+					}
+
+					// Escape quotes and wrap in quotes.
+					$this->logger->log( implode( ',', array_map( function( $field ) {
+						return '"' . str_replace( '"', '""', $field ) . '"';
+					}, $row ) ) );
+				}
+				break;
+
+			// Output wp search-replace commands (only for redirects).
+			case 'search-replace':
+				if ( $is_redirect ) {
+					foreach ( $results as $result ) {
+						$this->logger->log( sprintf( 'wp search-replace "%s" "%s" --dry-run', $result['original_url'], $result['final_url'] ) );
+					}
+				} else {
+					$this->logger->log( 'Search-replace format only available for redirects.' );
+				}
+				break;
+
+			// Output as numbered list.
+			case 'table':
+				foreach ( $results as $i => $result ) {
+					// Add header for first item.
+					if ( $i === 0 ) {
+						$title = $is_redirect ? 'Found Redirects:' : 'Broken Links:';
+						$this->logger->log( $title );
+						$this->logger->log( str_repeat( '=', 80 ) );
+					}
+
+					// Output original URL.
+					$this->logger->log( sprintf( '%d. %s', $i + 1, $result['original_url'] ) );
+
+					// Output final URL or status.
+					if ( $is_redirect ) {
+						$this->logger->log( sprintf( '   → %s', $result['final_url'] ) );
+					} else {
+						$this->logger->log( sprintf( '   (Status: %d)', $result['status_code'] ) );
+					}
+
+					// Add post info if available.
+					if ( $has_post_data ) {
+						$this->logger->log( sprintf( '   Post: %s (ID: %d)', $result['post_title'], $result['post_id'] ) );
+						$this->logger->log( sprintf( '   URL: %s', $result['permalink'] ) );
+					}
+
+					$this->logger->log( '' ); // Empty line for spacing.
+				}
+				break;
+
+			// Default to YAML.
+			default:
+				$this->logger->log( $this->array_to_yaml( $results ) );
+				break;
+		}
+	}
+
+	/**
+	 * Convert array to YAML format.
+	 *
+	 * @since 0.1.0
+	 *
+	 * @param array $data The data to convert.
+	 *
+	 * @return string
+	 */
+	private function array_to_yaml( $data ) {
+		$yaml = '';
+
+		foreach ( $data as $i => $item ) {
+			$yaml .= sprintf( "- original_url: %s\n", $item['original_url'] );
+
+			// Only include final_url if it's not empty (redirects only).
+			if ( ! empty( $item['final_url'] ) ) {
+				$yaml .= sprintf( "  final_url: %s\n", $item['final_url'] );
+			}
+
+			$yaml .= sprintf( "  status_code: %d\n", $item['status_code'] );
+
+			// Add post data if available.
+			if ( isset( $item['post_id'] ) ) {
+				$yaml .= sprintf( "  post_id: %d\n", $item['post_id'] );
+				$yaml .= sprintf( "  post_title: %s\n", $item['post_title'] );
+				$yaml .= sprintf( "  permalink: %s\n", $item['permalink'] );
+			}
+
+			// Add spacing between items.
+			if ( $i < count( $data ) - 1 ) {
+				$yaml .= "\n";
+			}
+		}
+
+		return $yaml;
+	}
+
 }
