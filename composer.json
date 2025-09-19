@@ -1,0 +1,14 @@
+{
+    "name": "mai/redirect-fixer",
+    "autoload": {
+        "psr-4": {
+            "Mai\\RedirectFixer\\": "classes/"
+        },
+        "classmap": [
+            "classes/"
+        ]
+    },
+    "require": {
+        "yahnis-elsts/plugin-update-checker": "^5.6"
+    }
+}
