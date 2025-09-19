@@ -70,7 +70,7 @@ class UrlFetcher {
 	public function fetch_url( $url, $first_fetch = true ) {
 		try {
 			// Validate the url.
-			$this->url = $this->validate_url( $url );
+			$this->url = $this->replace_host( $url, $this->args['home_path'], $this->args['host_path'] );
 
 			// Return error if the url is invalid.
 			if ( ! $this->url ) {
@@ -120,7 +120,7 @@ class UrlFetcher {
 
 			// Handle temporary redirects (302, 303, 307, 308) - don't follow, just return the redirect info.
 			if ( in_array( $code, [ 302, 303, 307, 308 ], true ) && $location ) {
-				$this->logger->log( sprintf( '-- %s found, returning', $code ) );
+				$this->logger->log( sprintf( '-- %s found', $code ) );
 				return [
 					'code'     => $code,
 					'location' => $location,
@@ -131,8 +131,14 @@ class UrlFetcher {
 			if ( in_array( $code, [ 404, 410 ] ) ) {
 				// If we have an existing redirect, try it.
 				if ( $this->args['existing'] ) {
-					// Validate the existing redirect.
-					$existing = $this->validate_url( $this->args['existing'] );
+					// If it's a relative url, convert it to an absolute url.
+					if ( ! wp_http_validate_url( $this->args['existing'] ) ) {
+						$existing = self::convert_relative_url( $this->args['existing'], $this->args['host_path'] );
+					}
+					// If it's an absolute url, replace the host.
+					else {
+						$existing = self::replace_host( $this->args['existing'], $this->args['home_path'], $this->args['host_path'] );
+					}
 
 					// If the existing redirect is valid and different from current URL, try it.
 					if ( $existing && $existing !== $this->url ) {
@@ -166,7 +172,7 @@ class UrlFetcher {
 				}
 
 				// Log the error.
-				$this->logger->error( sprintf( '-- %s found, returning', $code ) );
+				$this->logger->log( sprintf( '-- %s found', $code ) );
 
 				return [
 					'code'     => $code,
@@ -200,32 +206,19 @@ class UrlFetcher {
 	public function sanitize_args( $args ) {
 		// Parse arguments.
 		$args = wp_parse_args( $args, [
-			'host'     => '',
-			'existing' => '',
-			'username' => '',
-			'password' => '',
+			'existing'  => '',
+			'home_path' => '',
+			'host_path' => '',
+			'username'  => '',
+			'password'  => '',
 		]);
 
 		// Sanitize.
-		$args['host']     = sanitize_text_field( $args['host'] );
-		$args['existing'] = sanitize_text_field( $args['existing'] );
-		$args['username'] = sanitize_text_field( $args['username'] );
-		$args['password'] = sanitize_text_field( $args['password'] );
-
-		// Use the home_url() host if not provided.
-		if ( ! $args['host'] ) {
-			$args['host'] = wp_parse_url( home_url(), PHP_URL_HOST );
-		} else {
-			// If host is provided as a full URL, extract just the hostname.
-			$parsed_host = wp_parse_url( $args['host'] );
-			if ( isset( $parsed_host['host'] ) ) {
-				$args['host'] = $parsed_host['host'];
-			} else {
-				// If it's not a full URL, assume it's just the hostname.
-				$args['host'] = ltrim( rtrim( $args['host'], '/' ), 'https://' );
-				$args['host'] = ltrim( $args['host'], 'http://' );
-			}
-		}
+		$args['existing']  = sanitize_text_field( $args['existing'] );
+		$args['home_path'] = sanitize_text_field( $args['home_path'] );
+		$args['host_path'] = sanitize_text_field( $args['host_path'] );
+		$args['username']  = sanitize_text_field( $args['username'] );
+		$args['password']  = sanitize_text_field( $args['password'] );
 
 		return $args;
 	}
@@ -240,10 +233,7 @@ class UrlFetcher {
 	 * @return string
 	 */
 	private function check_slug_redirect( $url ) {
-		$return = '';
-
 		// Get data from url.
-		$url   = home_url( add_query_arg( null, null ) );
 		$path  = wp_parse_url( $url, PHP_URL_PATH );
 		$parts = explode( '/', $path );
 		$parts = array_filter( $parts );
@@ -252,8 +242,8 @@ class UrlFetcher {
 
 		// Bail if no parts or more than 2 parts.
 		if ( ! $parts || $count > 2 ) {
-			$this->logger->log( sprintf( '-- No parts or more than 2 parts, returning: %s', $return ) );
-			return $return;
+			$this->logger->log( '-- No parts or more than 2 parts' );
+			return false;
 		}
 
 		// Get the base and slug.
@@ -278,10 +268,10 @@ class UrlFetcher {
 		$query = new WP_Query( $args );
 
 		// Bail if no post found.
+		// No need to log because fetch_url() logs it after this.
 		if ( ! $query->have_posts() ) {
-			$this->logger->log( sprintf( '-- No post found, returning: %s', $return ) );
 			wp_reset_postdata();
-			return $return;
+			return false;
 		}
 
 		// Get the first post.
@@ -289,67 +279,165 @@ class UrlFetcher {
 		$permalink = $post ? get_permalink( $post->ID ) : '';
 
 		// Bail if no permalink found.
+		// No need to log because fetch_url() logs it after this.
 		if ( ! $permalink ) {
-			$this->logger->log( sprintf( '-- No permalink found, returning: %s', $return ) );
 			wp_reset_postdata();
-			return $return;
+			return false;
 		}
 
 		// Set the return value.
 		$this->logger->log( sprintf( '-- Post found, returning: %s', $permalink ) );
-		$return = $permalink;
 
-		return $return;
+		return $permalink;
 	}
 
+	// /**
+	//  * Validate the url.
+	//  *
+	//  * @since 0.1.0
+	//  *
+	//  * @param string $url The url to validate.
+	//  *
+	//  * @return string|false The validated url.
+	//  */
+	// private function validate_url( $url ) {
+	// 	// Bail if no url.
+	// 	if ( ! $url ) {
+	// 		return false;
+	// 	}
+
+	// 	// If we have a host to use for relative URLs
+	// 	if ( $this->args['host'] ) {
+	// 		// Parse the URL to check if it has a scheme and host
+	// 		$parsed = wp_parse_url( $url );
+
+	// 		// If the URL doesn't have a scheme or host, it's a relative URL.
+	// 		// Only prepend the host for relative URLs.
+	// 		if ( ! isset( $parsed['scheme'] ) || ! isset( $parsed['host'] ) ) {
+	// 			// This is a relative URL, prepend the host.
+	// 			$url = $this->prepend_host( $url );
+	// 		}
+	// 	}
+
+	// 	// Validate the final URL
+	// 	$url = wp_http_validate_url( $url );
+
+	// 	return $url;
+	// }
+
+	// /**
+	//  * Prepend a host to a URL path.
+	//  *
+	//  * @since 0.1.0
+	//  *
+	//  * @param string $path The URL path to prepend host to.
+	//  *
+	//  * @return string The URL with host prepended.
+	//  */
+	// private function prepend_host( $path ) {
+	// 	// Remove leading slash if present.
+	// 	$path = ltrim( $path, '/' );
+
+	// 	// Force https.
+	// 	return sprintf( 'https://%s/%s', untrailingslashit( $this->args['host'] ), $path );
+	// }
+
 	/**
-	 * Validate the url.
+	 * Convert relative URL to absolute URL using host path.
 	 *
 	 * @since 0.1.0
 	 *
-	 * @param string $url The url to validate.
+	 * @param string $url The URL to process.
+	 * @param string $host_path The host path to prepend.
 	 *
-	 * @return string|false The validated url.
+	 * @return string The processed URL.
 	 */
-	private function validate_url( $url ) {
-		// Bail if no url.
-		if ( ! $url ) {
-			return false;
+	public static function convert_relative_url( $url, $host_path ) {
+		// Bail if no host path provided.
+		if ( ! $host_path ) {
+			return $url;
 		}
 
-		// If we have a host to use for relative URLs
-		if ( $this->args['host'] ) {
-			// Parse the URL to check if it has a scheme and host
-			$parsed = wp_parse_url( $url );
-
-			// If the URL doesn't have a scheme or host, it's a relative URL.
-			// Only prepend the host for relative URLs.
-			if ( ! isset( $parsed['scheme'] ) || ! isset( $parsed['host'] ) ) {
-				// This is a relative URL, prepend the host.
-				$url = $this->prepend_host( $url );
-			}
+		// If URL is already absolute, return as-is.
+		if ( wp_http_validate_url( $url ) ) {
+			return $url;
 		}
 
-		// Validate the final URL
-		$url = wp_http_validate_url( $url );
+		// Convert host path to full URL if needed.
+		if ( ! str_contains( $host_path, '://' ) ) {
+			$host_path = 'https://' . $host_path;
+		}
 
-		return $url;
+		// Remove leading slash from URL if present.
+		$url = ltrim( $url, '/' );
+
+		// Return the full URL.
+		return rtrim( $host_path, '/' ) . '/' . $url;
 	}
 
 	/**
-	 * Prepend a host to a URL path.
+	 * Replace home path with host path in an absolute URL.
 	 *
 	 * @since 0.1.0
 	 *
-	 * @param string $path The URL path to prepend host to.
+	 * @param string $url       The URL to process.
+	 * @param string $home_path The home path to replace.
+	 * @param string $host_path The host path to replace with.
 	 *
-	 * @return string The URL with host prepended.
+	 * @return string|false The processed URL.
 	 */
-	private function prepend_host( $path ) {
-		// Remove leading slash if present.
-		$path = ltrim( $path, '/' );
+	public static function replace_host( $url, $home_path, $host_path ) {
+		// Bail if no host path provided.
+		if ( ! $host_path ) {
+			return $url;
+		}
 
-		// Force https.
-		return sprintf( 'https://%s/%s', untrailingslashit( $this->args['host'] ), $path );
+		// Bail if URL is not absolute.
+		if ( ! wp_http_validate_url( $url ) ) {
+			return $url;
+		}
+
+		// Bail if URL doesn't contain the home path.
+		if ( ! str_contains( $url, $home_path ) ) {
+			return $url;
+		}
+
+		// Convert hostnames to full URLs if needed.
+		if ( ! str_contains( $home_path, '://' ) ) {
+			$home_path = 'https://' . $home_path;
+		}
+		if ( ! str_contains( $host_path, '://' ) ) {
+			$host_path = 'https://' . $host_path;
+		}
+
+		// Parse both URLs to get just the host parts.
+		$old_host = wp_parse_url( $home_path, PHP_URL_HOST );
+		$new_host = wp_parse_url( $host_path, PHP_URL_HOST );
+
+		// Bail if we can't parse the hosts.
+		if ( ! $old_host || ! $new_host ) {
+			return $url;
+		}
+
+		// Replace the base hostname (without www).
+		$old_base = preg_replace( '/^www\./', '', $old_host );
+		$new_base = preg_replace( '/^www\./', '', $new_host );
+
+		// If we have a base hostname, replace it.
+		if ( $old_base && $new_base ) {
+			$url = str_replace( $old_base, $new_base, $url );
+		}
+
+		// Handle www differences.
+		if ( str_starts_with( $old_host, 'www.' ) && ! str_starts_with( $new_host, 'www.' ) ) {
+			// Old has www, new doesn't - remove www from URL.
+			$url = str_replace( 'www.', '', $url );
+		} elseif ( ! str_starts_with( $old_host, 'www.' ) && str_starts_with( $new_host, 'www.' ) ) {
+			// Old doesn't have www, new does - add www to URL.
+			$url = str_replace( 'https://', 'https://www.', $url );
+			$url = str_replace( 'http://', 'http://www.', $url );
+		}
+
+		return wp_http_validate_url( $url );
 	}
 }
