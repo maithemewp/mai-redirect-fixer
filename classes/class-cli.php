@@ -95,29 +95,39 @@ class CLI {
 	 * [--limit=<limit>]
 	 * : The maximum number of urls to check.
 	 *
+	 * [--offset=<offset>]
+	 * : The offset to start from.
+	 *
+	 * [--delay=<delay>]
+	 * : The delay between requests in seconds.
+	 *
+	 *
 	 * ## EXAMPLES
 	 *
-	 * wp mai-redirect-fixer check-urls --file=redirects.csv
-	 * wp mai-redirect-fixer check-urls --file=jamie-geller-redirects.csv --host=jamiegeller.com
-	 * wp mai-redirect-fixer check-urls --file=wp-content/uploads/redirects.csv
-	 * wp mai-redirect-fixer check-urls --file=wp-content/uploads/redirects.csv --host=example.com
-	 * wp mai-redirect-fixer check-urls --file=redirects.csv --username=admin --password=secret
-	 * wp mai-redirect-fixer check-urls --file=redirects.csv --limit=10
+	 * wp mai-redirect-fixer check-csv --file=redirects.csv
+	 * wp mai-redirect-fixer check-csv --file=jamie-geller-redirects.csv --host=jamiegeller.com
+	 * wp mai-redirect-fixer check-csv --file=wp-content/uploads/redirects.csv
+	 * wp mai-redirect-fixer check-csv --file=wp-content/uploads/redirects.csv --host=example.com
+	 * wp mai-redirect-fixer check-csv --file=redirects.csv --username=admin --password=secret
+	 * wp mai-redirect-fixer check-csv --file=redirects.csv --limit=10
 	 *
 	 * @since 0.1.0
 	 *
-	 * @subcommand check-urls
+	 * @subcommand check-csv
 	 * @param array $args
 	 * @param array $assoc_args
 	 *
 	 * @return void
 	 */
-	public function check_urls( $args, $assoc_args ) {
+	public function check_csv( $args, $assoc_args ) {
 		// Set the logger.
 		$this->logger = Logger::get_instance();
 
-		// Get the file.
-		$file = $assoc_args['file'] ? ABSPATH . ltrim( $assoc_args['file'], '/' ) : '';
+		// Get the params we need here.
+		$file   = $assoc_args['file'] ? ABSPATH . ltrim( $assoc_args['file'], '/' ) : '';
+		$limit  = $assoc_args['limit'] ? absint( $assoc_args['limit'] ) : 0;
+		$offset = $assoc_args['offset'] ? absint( $assoc_args['offset'] ) : 0;
+		$delay  = $assoc_args['delay'] ? floatval( $assoc_args['delay'] ) : 0;
 
 		// Bail if no file provided.
 		if ( empty( $file ) ) {
@@ -149,9 +159,9 @@ class CLI {
 			});
 
 			// If we have a limit.
-			if ( isset( $assoc_args['limit'] ) ) {
+			if ( $limit ) {
 				// Filter the csv to the limit.
-				$csv = array_slice( $csv, 0, absint( $assoc_args['limit'] ) );
+				$csv = array_slice( $csv, $offset, $limit );
 			}
 
 			// Set total count.
@@ -164,6 +174,8 @@ class CLI {
 			$count = 0;
 			foreach ( $csv as $row ) {
 				$count++;
+
+				// Get the url and existing redirect.
 				$url      = $row[0] ?? '';
 				$existing = $row[1] ?? '';
 
@@ -203,8 +215,10 @@ class CLI {
 					'code'    => $redirect['code'],
 				];
 
-				// Add a small delay between requests to be respectful
-				sleep( 1 );
+				// Add a small delay between requests to be respectful.
+				if ( $delay ) {
+					sleep( $delay );
+				}
 			}
 
 			$this->logger->success( sprintf( 'Found %d redirects.', count( $redirects ) ) );
