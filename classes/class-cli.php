@@ -653,5 +653,4 @@ class CLI {
 
 		return $yaml;
 	}
-
 }
