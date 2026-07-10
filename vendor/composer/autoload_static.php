@@ -7,18 +7,18 @@ namespace Composer\Autoload;
 class ComposerStaticInit08dcd7f73cab8f21db3c63a556104e97
 {
     public static $files = array (
-        'f6d4f6bcee7247df6b777884c3e22f98' => __DIR__ . '/..' . '/yahnis-elsts/plugin-update-checker/load-v5p6.php',
+        'bc0af1337b39f0d750e835f5263eb646' => __DIR__ . '/..' . '/yahnis-elsts/plugin-update-checker/load-v5p7.php',
     );
 
     public static $prefixLengthsPsr4 = array (
-        'M' => 
+        'M' =>
         array (
             'Mai\\RedirectFixer\\' => 18,
         ),
     );
 
     public static $prefixDirsPsr4 = array (
-        'Mai\\RedirectFixer\\' => 
+        'Mai\\RedirectFixer\\' =>
         array (
             0 => __DIR__ . '/../..' . '/classes',
         ),
