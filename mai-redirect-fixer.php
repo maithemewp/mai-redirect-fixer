@@ -5,6 +5,7 @@
  * Plugin URI:      https://bizbudding.com/
  * Description:     Attempts to find/fix broken redirects from a CSV file or links in post content.
  * Version:         0.1.0
+ * Requires PHP:    8.1
  *
  * Author:          BizBudding
  * Author URI:      https://bizbudding.com
